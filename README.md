@@ -6,7 +6,7 @@ A comprehensive Laravel application demonstrating best practices for handling hi
 
 This project showcases a complete solution for importing large datasets from rate-limited APIs while respecting both client-side and server-side constraints. It includes:
 
-- **Test API Server** with multi-tier rate limiting (20/10s, 400/min, 10,000/day)
+- **Test API Server** with multi-tier rate limiting (500/20s, 2000/100s)
 - **Saloon API Client** with proactive rate limit handling
 - **Queue-Based Import System** supporting concurrent workers
 - **Filament Admin Panel** with real-time progress monitoring
@@ -22,7 +22,7 @@ This project showcases a complete solution for importing large datasets from rat
 
 ### 🎯 Advanced Rate Limiting
 - **Client-side proactive throttling** using Saloon's rate limiter with shared cache state
-- **Server-side multi-tier limits**: 20/10s burst, 400/min medium, 10k/day long-term
+- **Server-side multi-tier limits**: 500/20s short-term, 2000/100s medium-term
 - **Fallback 429 handling** with coordinated sleep across workers
 - Tracks rate limit hits vs. avoided hits for efficiency metrics
 
@@ -155,12 +155,11 @@ $connector->send($request);
 ### Server-Side (Multi-Tier)
 
 ```php
-Route::middleware(['multi.throttle:20,10:400,60:10000,86400'])
+Route::middleware(['multi.throttle:500,20:2000,100'])
 ```
 
-- **20/10s**: Burst protection
-- **400/min**: Medium-term throttling  
-- **10k/day**: Long-term quota
+- **500/20s**: Short-term burst protection (25 requests/second)
+- **2000/100s**: Medium-term throttling (20 requests/second sustained)
 
 ### Fallback Handling
 
@@ -216,16 +215,22 @@ curl http://localhost:8000/api/items/123
 
 **Rate Limit Headers:**
 ```
-X-RateLimit-Limit: 20
-X-RateLimit-Remaining: 15
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 495
 X-RateLimit-Reset: 1729315200
 ```
 
 **429 Response:**
+```
+Status: 429 Too Many Requests
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 0
+Retry-After: 15
+```
 ```json
 {
   "message": "Too Many Requests",
-  "retry_after": 8
+  "retry_after": 15
 }
 ```
 
@@ -369,7 +374,7 @@ This project is open-source software licensed under the MIT license.
 ## Credits
 
 Built with:
-- [Laravel 11](https://laravel.com)
+- [Laravel 12](https://laravel.com)
 - [Saloon](https://docs.saloon.dev) - API client framework
 - [Filament](https://filamentphp.com) - Admin panel
 - [Laravel Horizon](https://laravel.com/docs/horizon) - Queue monitoring
