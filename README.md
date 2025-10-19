@@ -211,6 +211,39 @@ The seeder generates realistic test data with:
 - Prices ranging from $5 to $2000
 - Batch inserts for performance (100 items per batch)
 
+## Saloon API Client
+
+This project includes a **complete Saloon API client implementation** demonstrating best practices for building SDKs. See [SALOON_CLIENT.md](SALOON_CLIENT.md) for details.
+
+**Features:**
+- ✅ Type-safe DTOs (Data Transfer Objects)
+- ✅ Built-in rate limit handling with Saloon's rate limit plugin
+- ✅ Automatic pagination support
+- ✅ Clean, testable architecture
+- ✅ 11 comprehensive tests (all passing)
+
+**Quick Example:**
+
+```php
+use App\Api\RateTestConnector;
+use App\Api\Requests\GetItemsRequest;
+
+$connector = new RateTestConnector();
+$request = new GetItemsRequest(perPage: 50);
+$response = $connector->send($request);
+
+$paginatedItems = $request->createDtoFromResponse($response);
+
+foreach ($paginatedItems->items as $item) {
+    echo "{$item->name}: \${$item->price}\n";
+}
+```
+
+Run the example:
+```bash
+php artisan saloon:example
+```
+
 ## Use Cases
 
 This API is perfect for:
@@ -220,6 +253,7 @@ This API is perfect for:
 - **Load Testing**: Test how your client handles large datasets
 - **Error Handling**: Test 429 response handling and retry mechanisms
 - **Integration Testing**: Use as a mock API in your test suites
+- **Learning Saloon**: Complete working example of a production-ready Saloon client
 
 ## Project Structure
 
