@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\Item;
+use App\Models\ApiItem;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -55,14 +55,14 @@ class ItemSeeder extends Seeder
 
             // Insert in batches of 100 for better performance
             if (count($items) === 100) {
-                Item::insert($items);
+                ApiItem::insert($items);
                 $items = [];
             }
         }
 
         // Insert any remaining items
         if (!empty($items)) {
-            Item::insert($items);
+            ApiItem::insert($items);
         }
     }
 }

@@ -7,8 +7,8 @@ use App\ImportSources\ItemImportSource;
 use App\Jobs\FinalizeImportJob;
 use App\Jobs\ImportItemDetailsJob;
 use App\Models\Import;
+use App\Models\ImportedItem;
 use App\Models\ImportItemStatus;
-use App\Models\Item;
 use Illuminate\Console\Command;
 
 /**
@@ -39,15 +39,14 @@ class ImportItemsCommand extends Command
         if ($this->option('fresh')) {
             $this->warn('Clearing import tracking data...');
 
-            // Only clear the IMPORTED items (those with external_id)
-            // Keep the original seeded items that the API serves
-            Item::whereNotNull('external_id')->delete();
+            // Clear imported items (separate table from api_items)
+            ImportedItem::truncate();
             ImportItemStatus::truncate();
             Import::truncate();
             \Illuminate\Support\Facades\Cache::flush();
 
-            $this->info('✓ Cleared all imports, import statuses, imported items, and cache');
-            $this->info('✓ Kept original seeded items for API to serve');
+            $this->info('✓ Cleared all imports, import statuses, and imported items');
+            $this->info('✓ API source data (api_items) preserved');
             $this->newLine();
         }
 

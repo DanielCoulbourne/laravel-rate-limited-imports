@@ -5,17 +5,17 @@ namespace App\ImportSources;
 use App\Api\RateTestConnector;
 use App\Api\Requests\GetItemsRequest;
 use App\Contracts\ImportSource;
-use App\Models\Item;
+use App\Models\ImportedItem;
 use Illuminate\Database\Eloquent\Model;
 use Saloon\Http\Connector;
 use Saloon\Http\Request;
 
 /**
- * Import source for Item model
+ * Import source for ImportedItem model
  *
- * This class implements the ImportSource contract to define how Items
- * should be imported from the rate-test API. It encapsulates all the
- * API-specific logic for discovering and creating Item records.
+ * This class defines how to import items from the rate-test API
+ * into the imported_items table. It reads from the api_items table
+ * (via the API) and creates ImportedItem records.
  *
  * This is a user-level implementation - each application would create
  * their own ImportSource for their specific models and APIs.
@@ -27,7 +27,7 @@ class ItemImportSource implements ImportSource
      */
     public function getModelClass(): string
     {
-        return Item::class;
+        return ImportedItem::class;
     }
 
     /**
@@ -47,7 +47,7 @@ class ItemImportSource implements ImportSource
      */
     public function createModelFromListItem(array $item): Model
     {
-        return Item::create([
+        return ImportedItem::create([
             'name' => $item['name'],
             'external_id' => $item['id'],
         ]);
