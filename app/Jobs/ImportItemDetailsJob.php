@@ -2,14 +2,23 @@
 
 namespace App\Jobs;
 
-use App\Api\RateTestConnector;
-use App\Api\Requests\GetItemRequest;
+use App\Contracts\Importable;
 use App\Models\Import;
-use App\Models\ImportedItem;
+use App\Models\ImportItemStatus;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 
+/**
+ * Generic job for importing item details
+ *
+ * This job is completely generic and works with any model that implements
+ * the Importable interface. It fetches details from the API and delegates
+ * the population logic to the model itself.
+ *
+ * All import tracking happens via the ImportItemStatus model, so the
+ * actual model's table doesn't need any special columns.
+ */
 class ImportItemDetailsJob implements ShouldQueue
 {
     use Queueable;
@@ -34,8 +43,7 @@ class ImportItemDetailsJob implements ShouldQueue
      * Create a new job instance.
      */
     public function __construct(
-        public int $importedItemId,
-        public int $apiItemId,
+        public int $importItemStatusId,
         public int $importId
     ) {
     }
@@ -44,13 +52,13 @@ class ImportItemDetailsJob implements ShouldQueue
      * Handle a job failure.
      *
      * This is called when the job has exhausted all retry attempts.
-     * We mark the item as failed so the finalize job knows to skip it.
+     * We mark the item status as failed so the finalize job knows to skip it.
      */
     public function failed(\Throwable $exception): void
     {
-        $importedItem = ImportedItem::find($this->importedItemId);
-        if ($importedItem) {
-            $importedItem->markAsFailed($exception->getMessage());
+        $status = ImportItemStatus::find($this->importItemStatusId);
+        if ($status) {
+            $status->markAsFailed($exception->getMessage());
         }
     }
 
@@ -58,12 +66,40 @@ class ImportItemDetailsJob implements ShouldQueue
      * Execute the job.
      *
      * Fetches the full details for an item from the API and updates
-     * the ImportedItem record with description and price.
+     * the model using its own populateFromApiResponse method.
      */
     public function handle(): void
     {
-        $connector = new RateTestConnector($this->importId);
-        $request = new GetItemRequest($this->apiItemId);
+        $status = ImportItemStatus::find($this->importItemStatusId);
+        if (!$status) {
+            return;
+        }
+
+        $model = $status->importable;
+        if (!$model) {
+            throw new \Exception("Importable model not found for status {$this->importItemStatusId}");
+        }
+
+        // Verify model implements Importable
+        if (!$model instanceof Importable) {
+            throw new \Exception("Model must implement Importable interface");
+        }
+
+        $import = Import::find($this->importId);
+        if (!$import) {
+            throw new \Exception("Import not found: {$this->importId}");
+        }
+
+        // Mark as processing
+        $status->markAsProcessing();
+
+        // Get the API request from the model
+        $request = $model->getApiDetailRequest();
+
+        // Get connector from import source (stored in metadata for now)
+        // In a real package, this would be resolved via a registry or config
+        $connectorClass = $import->getMetadata('connector_class');
+        $connector = new $connectorClass($this->importId);
 
         $response = $connector->send($request);
 
@@ -71,10 +107,7 @@ class ImportItemDetailsJob implements ShouldQueue
         // This should rarely happen since our rate limiter sleeps proactively
         while ($response->status() === 429) {
             // Track that we hit a rate limit
-            $import = Import::find($this->importId);
-            if ($import) {
-                $import->incrementRateLimitHits();
-            }
+            $import->incrementRateLimitHits();
 
             $retryAfter = (int) ($response->header('Retry-After') ?? 60);
 
@@ -87,9 +120,7 @@ class ImportItemDetailsJob implements ShouldQueue
             // Use add() for atomic SETNX operation
             if (Cache::add($lockKey, $sleepUntil, $retryAfter)) {
                 // We successfully set the lock - track the sleep
-                if ($import) {
-                    $import->incrementRateLimitSleeps($retryAfter);
-                }
+                $import->incrementRateLimitSleeps($retryAfter);
                 sleep($retryAfter);
             } else {
                 // Another worker already set a sleep - just wait without tracking
@@ -108,21 +139,17 @@ class ImportItemDetailsJob implements ShouldQueue
 
         // If request failed for another reason, fail the job
         if ($response->failed()) {
-            throw new \Exception("Failed to fetch item {$this->apiItemId}: {$response->status()}");
+            throw new \Exception("Failed to fetch item {$status->external_id}: {$response->status()}");
         }
 
-        // Update the imported item with full details
-        $itemData = $response->json();
+        // Let the model populate itself from the API response
+        $model->populateFromApiResponse($response->json());
+        $model->save();
 
-        ImportedItem::where('id', $this->importedItemId)->update([
-            'description' => $itemData['description'] ?? null,
-            'price' => $itemData['price'] ?? null,
-        ]);
+        // Mark status as completed
+        $status->markAsCompleted();
 
         // Increment the import's items_imported_count
-        $import = Import::find($this->importId);
-        if ($import) {
-            $import->incrementItemsImportedCount();
-        }
+        $import->incrementItemsImportedCount();
     }
 }

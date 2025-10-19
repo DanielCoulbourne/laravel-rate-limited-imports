@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 
 class Import extends Model
 {
     protected $fillable = [
+        'importable_type',
         'started_at',
         'ended_at',
         'items_count',
@@ -17,13 +19,23 @@ class Import extends Model
         'total_sleep_seconds',
         'finalize_attempts',
         'last_finalize_attempt_at',
+        'metadata',
     ];
 
     protected $casts = [
         'started_at' => 'datetime',
         'ended_at' => 'datetime',
         'last_finalize_attempt_at' => 'datetime',
+        'metadata' => 'array',
     ];
+
+    /**
+     * Get all item statuses for this import
+     */
+    public function itemStatuses(): HasMany
+    {
+        return $this->hasMany(ImportItemStatus::class);
+    }
 
     /**
      * Increment the items count
@@ -65,7 +77,8 @@ class Import extends Model
      */
     public function getPermanentlyFailedItemsCount(): int
     {
-        return ImportedItem::where('import_id', $this->id)
+        return $this->itemStatuses()
+            ->where('status', 'failed')
             ->whereNotNull('last_failed_at')
             ->where('last_failed_at', '<=', now()->subMinutes(5))
             ->count();
@@ -156,5 +169,23 @@ class Import extends Model
         }
 
         return max(0, $total - $this->total_sleep_seconds);
+    }
+
+    /**
+     * Set metadata value
+     */
+    public function setMetadata(string $key, mixed $value): void
+    {
+        $metadata = $this->metadata ?? [];
+        $metadata[$key] = $value;
+        $this->update(['metadata' => $metadata]);
+    }
+
+    /**
+     * Get metadata value
+     */
+    public function getMetadata(string $key, mixed $default = null): mixed
+    {
+        return $this->metadata[$key] ?? $default;
     }
 }

@@ -2,105 +2,80 @@
 
 namespace App\Console\Commands;
 
-use App\Api\RateTestConnector;
-use App\Api\Requests\GetItemsRequest;
+use App\Contracts\ImportSource;
+use App\ImportSources\ItemImportSource;
 use App\Jobs\FinalizeImportJob;
 use App\Jobs\ImportItemDetailsJob;
 use App\Models\Import;
-use App\Models\ImportedItem;
+use App\Models\ImportItemStatus;
+use App\Models\Item;
 use Illuminate\Console\Command;
 
 /**
- * Import Items Command
+ * Import Items Command (Refactored)
  *
- * PURPOSE:
- * This command demonstrates handling high-volume API imports with rate limiting
- * and concurrent queue workers. It's designed to handle scenarios where you need
- * to download thousands of items from a rate-limited API as quickly as possible
- * while respecting both client-side and server-side rate limits.
+ * This command now uses the packageable import architecture.
+ * It delegates to an ImportSource implementation which encapsulates
+ * all the API-specific logic.
  *
- * THE PROBLEM WE'RE SOLVING:
- * When importing large datasets from APIs, you often hit these challenges:
- * 1. Rate limits prevent bulk downloads
- * 2. Multiple concurrent queue workers can overwhelm rate limits
- * 3. Workers may wake up simultaneously and hit limits again
- * 4. APIs may have unpublished or changing rate limits
- *
- * OUR SOLUTION:
- * - Use Saloon's client-side rate limiting with ->sleep() to proactively throttle
- * - Use LaravelCacheStore to share rate limit state across ALL queue workers
- * - Handle unexpected 429 responses gracefully with job release/retry
- * - Two-phase import: quick list fetch, then queue detail jobs for parallelization
- * - Track import progress with Import model
- *
- * HOW IT WORKS:
- * 1. Create an Import record with started_at timestamp
- * 2. Parent command paginates through item list endpoint
- * 3. For each item, creates an ImportedItem with just the name (fast)
- * 4. Immediately dispatches a job to fetch full details (parallelized as we go)
- * 5. Each detail job increments items_imported_count when complete
- * 6. After pagination, dispatch finalize job to set ended_at
- * 7. Multiple queue workers process detail jobs concurrently
- * 8. Rate limiting prevents workers from overwhelming the API
- *
- * RATE LIMITING STRATEGY:
- * - Client-side: Saloon tracks requests and sleeps BEFORE hitting limits
- * - Shared state: LaravelCacheStore ensures all workers see the same counters
- * - Fallback: Jobs catch 429 responses and release back to queue with retry-after
- *
- * RUNNING WITH CONCURRENT WORKERS:
- * Terminal 1: php artisan import:items
- * Terminal 2: php artisan horizon (manages multiple workers automatically)
- *
- * The workers will process detail jobs in parallel while respecting
- * the shared rate limit state.
+ * The command itself is now mostly generic - it could work with any
+ * ImportSource implementation, not just Items.
  */
 class ImportItemsCommand extends Command
 {
     protected $signature = 'import:items {--fresh : Delete all existing imports and items before starting}';
 
-    protected $description = 'Import items from API with rate limit handling and concurrent job processing';
+    protected $description = 'Import items from API using the packageable import system';
 
     /**
      * Execute the console command.
      */
     public function handle(): int
     {
+        // Create the import source (in a package, this would be configurable)
+        $source = new ItemImportSource();
+
         // Handle --fresh flag
         if ($this->option('fresh')) {
             $this->warn('Clearing all existing data...');
-            \App\Models\ImportedItem::truncate();
-            \App\Models\Import::truncate();
+            Item::truncate();
+            ImportItemStatus::truncate();
+            Import::truncate();
             \Illuminate\Support\Facades\Cache::flush();
-            $this->info('✓ Cleared all imports, items, and cache');
+            $this->info('✓ Cleared all imports, import statuses, items, and cache');
             $this->newLine();
         }
 
-        $this->info('Starting item import...');
+        $this->info('Starting item import using packageable architecture...');
         $this->info('This will paginate through all items and queue detail fetch jobs.');
         $this->newLine();
 
         // Create import record
         $import = Import::create([
+            'importable_type' => $source->getModelClass(),
             'started_at' => now(),
         ]);
 
+        // Store connector class in metadata for jobs to use
+        $import->setMetadata('connector_class', get_class($source->getConnector($import->id)));
+
         $this->info("Import ID: {$import->id}");
+        $this->info("Importing: {$source->getModelClass()}");
         $this->newLine();
 
-        // PHASE 1: Paginate and create ImportedItem records
+        // PHASE 1: Discover items
         $this->info('PHASE 1: Discovering all items...');
         $this->newLine();
 
-        $connector = new RateTestConnector($import->id);
+        $connector = $source->getConnector($import->id);
         $page = 1;
         $totalItems = 0;
-        $itemsToQueue = [];
+        $statusesToQueue = [];
 
         do {
             $this->info("Fetching page {$page}...");
 
-            $request = new GetItemsRequest(page: $page, perPage: 10);
+            $request = $source->getListRequest($page, 10);
             $response = $connector->send($request);
 
             // Handle unexpected 429 responses
@@ -120,29 +95,29 @@ class ImportItemsCommand extends Command
             $items = $data['data'] ?? [];
 
             foreach ($items as $item) {
-                // Create ImportedItem with import_id and name only (fast)
-                $importedItem = ImportedItem::create([
+                // Create the model using the source
+                $model = $source->createModelFromListItem($item);
+
+                // Create import status tracking (polymorphic)
+                $status = ImportItemStatus::create([
                     'import_id' => $import->id,
-                    'name' => $item['name'],
+                    'importable_type' => get_class($model),
+                    'importable_id' => $model->id,
+                    'external_id' => $item['id'],
+                    'status' => 'pending',
                 ]);
 
-                // Store for Phase 2 queueing
-                $itemsToQueue[] = [
-                    'imported_item_id' => $importedItem->id,
-                    'api_item_id' => $item['id'],
-                ];
-
+                $statusesToQueue[] = $status->id;
                 $totalItems++;
             }
 
             // Update import items_count as we discover items
-            Import::where('id', $import->id)->increment('items_count', count($items));
+            $import->increment('items_count', count($items));
 
             $this->comment("  → Discovered {$totalItems} items");
 
-            // Check if there's a next page
-            $hasNextPage = !empty($data['next_page_url']) ||
-                          ($data['current_page'] ?? 0) < ($data['last_page'] ?? 0);
+            // Check if there's a next page using the source
+            $hasNextPage = $source->hasNextPage($data);
 
             if ($hasNextPage) {
                 $page++;
@@ -157,15 +132,14 @@ class ImportItemsCommand extends Command
         $this->info("  Total items discovered: {$totalItems}");
         $this->newLine();
 
-        // PHASE 2: Queue detail jobs for all discovered items
+        // PHASE 2: Queue detail jobs
         $this->info('PHASE 2: Queueing detail fetch jobs...');
         $this->newLine();
 
         $jobsQueued = 0;
-        foreach ($itemsToQueue as $item) {
+        foreach ($statusesToQueue as $statusId) {
             ImportItemDetailsJob::dispatch(
-                importedItemId: $item['imported_item_id'],
-                apiItemId: $item['api_item_id'],
+                importItemStatusId: $statusId,
                 importId: $import->id
             );
             $jobsQueued++;
@@ -178,14 +152,14 @@ class ImportItemsCommand extends Command
         $this->newLine();
         $this->info("✓ All {$totalItems} detail jobs queued!");
 
-        // Queue the finalize job with a delay to give jobs time to process
-        // The finalize job will check if import is complete and re-queue itself if not
+        // Queue the finalize job
         FinalizeImportJob::dispatch($import->id)->delay(now()->addSeconds(30));
 
         $this->newLine();
         $this->info("✓ Import started!");
         $this->comment("Import ID: {$import->id}");
-        $this->comment('Monitor progress at: http://rate-test.test/horizon');
+        $this->comment("Model: {$source->getModelClass()}");
+        $this->comment('Monitor progress at: http://rate-test.test/admin/imports/' . $import->id);
         $this->comment('Or check: Import::find(' . $import->id . ')');
 
         return Command::SUCCESS;
