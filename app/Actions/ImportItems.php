@@ -50,12 +50,21 @@ class ImportItems
         if ($importId) {
             $import = Import::findOrFail($importId);
             $import->markAsStarted();
+            // Initialize items_count to 0 when starting a scheduled import
+            $import->update(['items_count' => 0]);
         } else {
             $import = Import::create([
                 'importable_type' => $source->getModelClass(),
                 'status' => 'running',
                 'started_at' => now(),
+                'items_count' => 0,
             ]);
+        }
+
+        // Schedule next import immediately if there isn't one already
+        // This ensures there's always a future import scheduled even if this one fails
+        if (!Import::hasFutureScheduledImport()) {
+            ScheduleImport::dispatch();
         }
 
         $import->setMetadata('connector_class', get_class($source->getConnector($import->id)));
@@ -112,11 +121,6 @@ class ImportItems
         }
 
         FinalizeImport::dispatch($import->id)->delay(now()->addSeconds(30));
-
-        // Schedule next import if there isn't one already
-        if (!Import::hasFutureScheduledImport()) {
-            ScheduleImport::dispatch();
-        }
 
         return Command::SUCCESS;
     }

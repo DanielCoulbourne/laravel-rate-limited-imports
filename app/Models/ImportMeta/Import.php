@@ -126,11 +126,13 @@ class Import extends Model
      */
     public function getProgressPercentage(): float
     {
-        if ($this->items_count === 0) {
+        $itemsCount = $this->items_count ?? 0;
+
+        if ($itemsCount === 0) {
             return 0;
         }
 
-        return round(($this->items_imported_count / $this->items_count) * 100, 2);
+        return round(($this->items_imported_count / $itemsCount) * 100, 2);
     }
 
     /**

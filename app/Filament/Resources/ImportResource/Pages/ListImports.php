@@ -24,16 +24,16 @@ class ListImports extends ListRecords
                 ->color('success')
                 ->form([
                     Radio::make('import_type')
-                        ->label('Import Type')
+                        ->label('How should this import run?')
                         ->options([
-                            'new' => 'Schedule a NEW import for right now (outside normal schedule)',
-                            'reschedule' => 'RESCHEDULE the next import for right now (keep future schedule intact)',
+                            'new' => 'New import',
+                            'reschedule' => 'Reschedule next import',
                         ])
                         ->default('new')
                         ->required()
                         ->descriptions([
-                            'new' => 'Creates a brand new import to run immediately',
-                            'reschedule' => 'Takes the next scheduled import and runs it now',
+                            'new' => 'Start a new import immediately',
+                            'reschedule' => 'Run the next scheduled import now',
                         ])
                 ])
                 ->action(function (array $data) {

@@ -24,7 +24,12 @@ class ImportResource extends Resource
                 Tables\Columns\TextColumn::make('items_count')
                     ->label('Items')
                     ->sortable()
-                    ->formatStateUsing(fn (Import $record) => number_format($record->items_count)),
+                    ->formatStateUsing(function (Import $record) {
+                        if ($record->items_count === null) {
+                            return '—';
+                        }
+                        return number_format($record->items_count);
+                    }),
 
                 ProgressColumn::make('progress')
                     ->label('Progress')
@@ -36,7 +41,7 @@ class ImportResource extends Resource
                     ->getStateUsing(function (Import $record) {
                         $seconds = $record->getTotalDurationSeconds();
                         if (!$seconds) {
-                            return 'N/A';
+                            return '—';
                         }
                         $minutes = floor($seconds / 60);
                         $secs = $seconds % 60;
@@ -44,27 +49,23 @@ class ImportResource extends Resource
                     }),
 
                 Tables\Columns\TextColumn::make('rate_limits')
-                    ->label('Rate Limits (Hits/Sleeps)')
+                    ->label('Rate Limits')
                     ->getStateUsing(function (Import $record) {
-                        return "{$record->rate_limit_hits_count} / {$record->rate_limit_sleeps_count}";
-                    })
-                    ->badge()
-                    ->color(fn (Import $record) => $record->rate_limit_hits_count > 0 ? 'danger' : 'success'),
-
-                Tables\Columns\TextColumn::make('time_breakdown')
-                    ->label('Sleep/Active Time')
-                    ->getStateUsing(function (Import $record) {
+                        $hits = $record->rate_limit_hits_count;
                         $sleepSeconds = $record->total_sleep_seconds;
-                        $activeSeconds = $record->getActiveImportingSeconds();
+
+                        if ($hits === 0) {
+                            return '—';
+                        }
 
                         $formatTime = function ($seconds) {
-                            if ($seconds === null) return 'N/A';
+                            if ($seconds === null || $seconds === 0) return '0s';
                             $minutes = floor($seconds / 60);
                             $secs = $seconds % 60;
                             return $minutes > 0 ? "{$minutes}m{$secs}s" : "{$secs}s";
                         };
 
-                        return $formatTime($sleepSeconds) . ' / ' . $formatTime($activeSeconds);
+                        return "{$hits} (🕑 {$formatTime($sleepSeconds)})";
                     }),
 
                 Tables\Columns\TextColumn::make('status')
@@ -106,10 +107,45 @@ class ImportResource extends Resource
                     }),
                 Tables\Columns\TextColumn::make('scheduled_at')
                     ->label('Scheduled For')
-                    ->dateTime()
                     ->sortable()
                     ->toggleable()
-                    ->placeholder('N/A'),
+                    ->formatStateUsing(function (Import $record) {
+                        if (!$record->scheduled_at) {
+                            return '—';
+                        }
+
+                        $scheduledAt = $record->scheduled_at;
+                        $now = now();
+
+                        // Format time in EST
+                        $timeFormatted = $scheduledAt->timezone('America/New_York')->format('g:ia T');
+
+                        // Check if today
+                        if ($scheduledAt->isToday()) {
+                            return $timeFormatted;
+                        }
+
+                        // Check if tomorrow
+                        if ($scheduledAt->isTomorrow()) {
+                            return "Tomorrow at {$timeFormatted}";
+                        }
+
+                        // Check if yesterday
+                        if ($scheduledAt->isYesterday()) {
+                            return "Yesterday at {$timeFormatted}";
+                        }
+
+                        // Calculate days difference
+                        $daysDiff = (int) $now->startOfDay()->diffInDays($scheduledAt->startOfDay(), false);
+
+                        if ($daysDiff > 0) {
+                            // Future dates
+                            return abs($daysDiff) . " days from now at {$timeFormatted}";
+                        } else {
+                            // Past dates
+                            return abs($daysDiff) . " days ago at {$timeFormatted}";
+                        }
+                    }),
             ])
             ->defaultSort('id', 'desc')
             ->filters([
@@ -124,15 +160,19 @@ class ImportResource extends Resource
                     ),
             ])
             ->actions([
-                Tables\Actions\ViewAction::make(),
-                Tables\Actions\Action::make('cancel')
-                    ->icon('heroicon-o-x-circle')
-                    ->color('danger')
-                    ->requiresConfirmation()
-                    ->modalHeading('Cancel Import')
-                    ->modalDescription('Are you sure you want to cancel this import? This action cannot be undone.')
-                    ->action(fn (Import $record) => $record->markAsCancelled())
-                    ->visible(fn (Import $record) => $record->isScheduled() || $record->isOverdue()),
+                Tables\Actions\ActionGroup::make([
+                    Tables\Actions\ViewAction::make(),
+                    Tables\Actions\Action::make('cancel')
+                        ->icon('heroicon-o-x-circle')
+                        ->color('danger')
+                        ->requiresConfirmation()
+                        ->modalHeading('Cancel Import')
+                        ->modalDescription('Are you sure you want to cancel this import? This action cannot be undone.')
+                        ->action(fn (Import $record) => $record->markAsCancelled())
+                        ->visible(fn (Import $record) => $record->isScheduled() || $record->isOverdue()),
+                    Tables\Actions\DeleteAction::make()
+                        ->visible(fn (Import $record) => !$record->isScheduled() && !$record->isOverdue() && !$record->isRunning()),
+                ]),
             ])
             ->bulkActions([])
             ->poll('1s');
@@ -158,7 +198,8 @@ class ImportResource extends Resource
 
     public static function canDelete($record): bool
     {
-        return false;
+        // Allow deleting any import that's not scheduled, overdue, or running
+        return !$record->isScheduled() && !$record->isOverdue() && !$record->isRunning();
     }
 
     public static function canDeleteAny(): bool
