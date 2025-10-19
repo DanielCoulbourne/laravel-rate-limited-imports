@@ -88,9 +88,14 @@ class ImportItemsCommand extends Command
         $this->info("Import ID: {$import->id}");
         $this->newLine();
 
+        // PHASE 1: Paginate and create ImportedItem records
+        $this->info('PHASE 1: Discovering all items...');
+        $this->newLine();
+
         $connector = new RateTestConnector($import->id);
         $page = 1;
         $totalItems = 0;
+        $itemsToQueue = [];
 
         do {
             $this->info("Fetching page {$page}...");
@@ -115,17 +120,17 @@ class ImportItemsCommand extends Command
             $items = $data['data'] ?? [];
 
             foreach ($items as $item) {
-                // Create ImportedItem with just the name (fast)
+                // Create ImportedItem with import_id and name only (fast)
                 $importedItem = ImportedItem::create([
+                    'import_id' => $import->id,
                     'name' => $item['name'],
                 ]);
 
-                // Dispatch detail job IMMEDIATELY (don't wait for pagination to complete)
-                ImportItemDetailsJob::dispatch(
-                    importedItemId: $importedItem->id,
-                    apiItemId: $item['id'],
-                    importId: $import->id
-                );
+                // Store for Phase 2 queueing
+                $itemsToQueue[] = [
+                    'imported_item_id' => $importedItem->id,
+                    'api_item_id' => $item['id'],
+                ];
 
                 $totalItems++;
             }
@@ -133,7 +138,7 @@ class ImportItemsCommand extends Command
             // Update import items_count as we discover items
             Import::where('id', $import->id)->increment('items_count', count($items));
 
-            $this->comment("  → Created {$totalItems} items, queued {$totalItems} jobs");
+            $this->comment("  → Discovered {$totalItems} items");
 
             // Check if there's a next page
             $hasNextPage = !empty($data['next_page_url']) ||
@@ -150,7 +155,28 @@ class ImportItemsCommand extends Command
         $this->newLine();
         $this->info("✓ Pagination complete!");
         $this->info("  Total items discovered: {$totalItems}");
-        $this->info("  All {$totalItems} detail jobs queued!");
+        $this->newLine();
+
+        // PHASE 2: Queue detail jobs for all discovered items
+        $this->info('PHASE 2: Queueing detail fetch jobs...');
+        $this->newLine();
+
+        $jobsQueued = 0;
+        foreach ($itemsToQueue as $item) {
+            ImportItemDetailsJob::dispatch(
+                importedItemId: $item['imported_item_id'],
+                apiItemId: $item['api_item_id'],
+                importId: $import->id
+            );
+            $jobsQueued++;
+
+            if ($jobsQueued % 100 === 0) {
+                $this->comment("  → Queued {$jobsQueued}/{$totalItems} jobs");
+            }
+        }
+
+        $this->newLine();
+        $this->info("✓ All {$totalItems} detail jobs queued!");
 
         // Queue the finalize job with a delay to give jobs time to process
         // The finalize job will check if import is complete and re-queue itself if not

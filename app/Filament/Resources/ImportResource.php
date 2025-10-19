@@ -92,7 +92,7 @@ class ImportResource extends Resource
                 Tables\Actions\ViewAction::make(),
             ])
             ->bulkActions([])
-            ->poll('5s');
+            ->poll('1s');
     }
 
     public static function getPages(): array

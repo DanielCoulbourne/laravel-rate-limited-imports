@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware(['multi.throttle:20,10:400,60:10000,86400'])
+Route::middleware(['multi.throttle:500,20:2000,100'])
     ->group(function () {
         Route::get('/items', [ItemController::class, 'index']);
         Route::get('/items/{item}', [ItemController::class, 'show']);

@@ -12,7 +12,16 @@ class ViewImport extends ViewRecord
 {
     protected static string $resource = ImportResource::class;
 
-    protected $pollingInterval = '5s';
+    protected static string $view = 'filament.resources.import-resource.pages.view-import';
+
+    /**
+     * Refresh the record from database on each poll
+     * This ensures duration calculations use the actual ended_at value
+     */
+    public function refreshRecord(): void
+    {
+        $this->record = $this->record->fresh();
+    }
 
     protected function getHeaderActions(): array
     {

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class Import extends Model
 {
@@ -14,11 +15,14 @@ class Import extends Model
         'rate_limit_hits_count',
         'rate_limit_sleeps_count',
         'total_sleep_seconds',
+        'finalize_attempts',
+        'last_finalize_attempt_at',
     ];
 
     protected $casts = [
         'started_at' => 'datetime',
         'ended_at' => 'datetime',
+        'last_finalize_attempt_at' => 'datetime',
     ];
 
     /**
@@ -51,6 +55,52 @@ class Import extends Model
     public function isComplete(): bool
     {
         return $this->items_count > 0 && $this->items_count === $this->items_imported_count;
+    }
+
+    /**
+     * Get count of items that have permanently failed (last failed > 5 minutes ago)
+     *
+     * If an item failed more than 5 minutes ago, it means it's exhausted all retries
+     * and won't be attempted again (with our exponential backoff of 30s, 60s, 120s, 240s).
+     */
+    public function getPermanentlyFailedItemsCount(): int
+    {
+        return ImportedItem::where('import_id', $this->id)
+            ->whereNotNull('last_failed_at')
+            ->where('last_failed_at', '<=', now()->subMinutes(5))
+            ->count();
+    }
+
+    /**
+     * Check if import is complete including permanently failed items
+     *
+     * An import is considered complete when:
+     * items_imported_count + permanently_failed_count >= items_count
+     *
+     * This means all items have either been successfully imported OR
+     * have permanently failed (exhausted all retries > 5 minutes ago).
+     */
+    public function isCompleteIncludingFailed(): bool
+    {
+        if ($this->items_count === 0) {
+            return false;
+        }
+
+        $permanentlyFailed = $this->getPermanentlyFailedItemsCount();
+        $accountedFor = $this->items_imported_count + $permanentlyFailed;
+
+        return $accountedFor >= $this->items_count;
+    }
+
+    /**
+     * Increment finalize attempts counter
+     */
+    public function incrementFinalizeAttempts(): void
+    {
+        static::where('id', $this->id)->update([
+            'finalize_attempts' => $this->finalize_attempts + 1,
+            'last_finalize_attempt_at' => now(),
+        ]);
     }
 
     /**

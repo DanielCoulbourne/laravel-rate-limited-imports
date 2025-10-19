@@ -2,29 +2,22 @@
 
 namespace App\Api;
 
-use Illuminate\Support\Facades\Cache;
+use App\Api\RateLimit\HasGlobalRateLimiting;
+use App\Api\RateLimit\RateLimitConfig;
 use Saloon\Http\Connector;
-use Saloon\Http\PendingRequest;
-use Saloon\RateLimitPlugin\Contracts\RateLimitStore;
-use Saloon\RateLimitPlugin\Limit;
-use Saloon\RateLimitPlugin\Stores\LaravelCacheStore;
-use Saloon\RateLimitPlugin\Traits\HasRateLimits;
 use Saloon\Traits\Plugins\AcceptsJson;
 use Saloon\Traits\Plugins\HasTimeout;
 
 class RateTestConnector extends Connector
 {
     use AcceptsJson;
-    use HasRateLimits;
+    use HasGlobalRateLimiting;
     use HasTimeout;
 
     protected ?int $trackingImportId = null;
 
     public function __construct(?int $trackingImportId = null)
     {
-        // Disable automatic 429 detection
-        $this->detectTooManyAttempts = false;
-
         $this->trackingImportId = $trackingImportId;
     }
 
@@ -53,70 +46,21 @@ class RateTestConnector extends Connector
         ];
     }
 
-    protected function resolveLimits(): array
+    protected function rateLimitConfig(): RateLimitConfig
     {
-        return [
-            Limit::allow(10)->everySeconds(10)->sleep(),
-            Limit::allow(200)->everyMinute()->sleep(),
-        ];
-    }
-
-    protected function resolveRateLimitStore(): RateLimitStore
-    {
-        return new LaravelCacheStore(Cache::store());
-    }
-
-    protected function handleExceededLimit(Limit $limit, PendingRequest $pendingRequest): void
-    {
-        if (! $limit->getShouldSleep()) {
-            $this->throwLimitException($limit);
-        }
-
-        $sleepSeconds = (int) ceil($limit->getRemainingSeconds());
-
-        // Set a global sleep lock in Redis that ALL workers must respect
-        $lockKey = 'rate_limit:sleep_until';
-        $sleepUntil = now()->addSeconds($sleepSeconds)->timestamp;
-
-        // Only set if this sleep is longer than any existing sleep
-        $existingSleepUntil = Cache::get($lockKey, 0);
-        if ($sleepUntil > $existingSleepUntil) {
-            Cache::put($lockKey, $sleepUntil, $sleepSeconds);
-
-            // Only track this sleep once (the worker that sets the lock)
-            $this->trackSleep($sleepSeconds);
-        }
-
-        // Set the delay on the request
-        $existingDelay = $pendingRequest->delay()->get() ?? 0;
-        $remainingMilliseconds = $sleepSeconds * 1000;
-
-        $pendingRequest->delay()->set($existingDelay + $remainingMilliseconds);
-    }
-
-    public function bootHasRateLimits(PendingRequest $pendingRequest): void
-    {
-        // Before processing any request, check if we're globally sleeping
-        $lockKey = 'rate_limit:sleep_until';
-        $sleepUntil = Cache::get($lockKey, 0);
-
-        if ($sleepUntil > now()->timestamp) {
-            $sleepSeconds = $sleepUntil - now()->timestamp;
-            // Set delay without tracking (already tracked by the worker that set the lock)
-            $pendingRequest->delay()->set($sleepSeconds * 1000);
-        }
-
-        // Call the original trait boot method
-        parent::bootHasRateLimits($pendingRequest);
-    }
-
-    protected function trackSleep(int $seconds): void
-    {
-        if ($this->trackingImportId) {
-            $import = \App\Models\Import::find($this->trackingImportId);
-            if ($import) {
-                $import->incrementRateLimitSleeps($seconds);
-            }
-        }
+        return new RateLimitConfig(
+            limits: [
+                [400, 20],   // 400 requests per 20 seconds (burst limit)
+                [2100, 100], // 2100 requests per 100 seconds (will exceed API's 2000/100s)
+            ],
+            onSleep: function (int $seconds) {
+                if ($this->trackingImportId) {
+                    $import = \App\Models\Import::find($this->trackingImportId);
+                    if ($import) {
+                        $import->incrementRateLimitSleeps($seconds);
+                    }
+                }
+            },
+        );
     }
 }
