@@ -2,7 +2,7 @@
 
 namespace App\Traits;
 
-use App\Models\ImportItemStatus;
+use App\Models\ImportMeta\ImportedItemStatus;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 
 /**
@@ -33,7 +33,7 @@ trait HasImportStatus
      */
     public function importStatus(): MorphOne
     {
-        return $this->morphOne(ImportItemStatus::class, 'importable');
+        return $this->morphOne(ImportedItemStatus::class, 'importable');
     }
 
     /**

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\ImportMeta;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -34,7 +34,7 @@ class Import extends Model
      */
     public function itemStatuses(): HasMany
     {
-        return $this->hasMany(ImportItemStatus::class);
+        return $this->hasMany(ImportedItemStatus::class);
     }
 
     /**

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\ImportMeta;
 
 use App\Api\Requests\GetItemRequest;
 use App\Contracts\Importable;

@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\ApiItem;
+use App\Models\SourceApi\ApiItem;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 

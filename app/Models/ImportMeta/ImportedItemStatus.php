@@ -1,13 +1,13 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\ImportMeta;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
- * Import Item Status Model
+ * Imported Item Status Model
  *
  * Tracks the import progress of individual items without modifying
  * the imported model's table. Uses polymorphic relationships to work
@@ -16,8 +16,10 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * This model is part of the packageable import system and should not
  * need modification by package users.
  */
-class ImportItemStatus extends Model
+class ImportedItemStatus extends Model
 {
+    protected $table = 'import_item_statuses';
+
     protected $fillable = [
         'import_id',
         'importable_type',

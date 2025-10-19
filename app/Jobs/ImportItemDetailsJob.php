@@ -3,8 +3,8 @@
 namespace App\Jobs;
 
 use App\Contracts\Importable;
-use App\Models\Import;
-use App\Models\ImportItemStatus;
+use App\Models\ImportMeta\Import;
+use App\Models\ImportMeta\ImportedItemStatus;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -56,7 +56,7 @@ class ImportItemDetailsJob implements ShouldQueue
      */
     public function failed(\Throwable $exception): void
     {
-        $status = ImportItemStatus::find($this->importItemStatusId);
+        $status = ImportedItemStatus::find($this->importItemStatusId);
         if ($status) {
             $status->markAsFailed($exception->getMessage());
         }
@@ -70,7 +70,7 @@ class ImportItemDetailsJob implements ShouldQueue
      */
     public function handle(): void
     {
-        $status = ImportItemStatus::find($this->importItemStatusId);
+        $status = ImportedItemStatus::find($this->importItemStatusId);
         if (!$status) {
             return;
         }

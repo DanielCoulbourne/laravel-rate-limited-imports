@@ -5,7 +5,7 @@ namespace App\ImportSources;
 use App\Api\RateTestConnector;
 use App\Api\Requests\GetItemsRequest;
 use App\Contracts\ImportSource;
-use App\Models\ImportedItem;
+use App\Models\ImportMeta\ImportedItem;
 use Illuminate\Database\Eloquent\Model;
 use Saloon\Http\Connector;
 use Saloon\Http\Request;

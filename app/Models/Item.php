@@ -1,5 +1,3 @@
-<?php
-
 namespace App\Models;
 
 use App\Api\Requests\GetItemRequest;
@@ -8,6 +6,19 @@ use App\Traits\HasImportStatus;
 use Illuminate\Database\Eloquent\Model;
 use Saloon\Http\Request;
 
+/**
+ * Item Model
+ *
+ * This is a placeholder for your application's actual Item model.
+ * In a real application, this would be your business logic layer
+ * that consumes data from ImportedItem.
+ *
+ * You might:
+ * - Transform ImportedItem data into Item records
+ * - Add business rules and validation
+ * - Create relationships to other application models
+ * - Add computed properties or accessors
+ */
 class Item extends Model implements Importable
 {
     use HasImportStatus;

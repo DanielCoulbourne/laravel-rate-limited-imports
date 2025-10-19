@@ -55,7 +55,7 @@ class RateTestConnector extends Connector
             ],
             onSleep: function (int $seconds) {
                 if ($this->trackingImportId) {
-                    $import = \App\Models\Import::find($this->trackingImportId);
+                    $import = \App\Models\ImportMeta\Import::find($this->trackingImportId);
                     if ($import) {
                         $import->incrementRateLimitSleeps($seconds);
                     }

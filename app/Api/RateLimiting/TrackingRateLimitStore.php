@@ -2,7 +2,7 @@
 
 namespace App\Api\RateLimiting;
 
-use App\Models\Import;
+use App\Models\ImportMeta\Import;
 use Saloon\RateLimitPlugin\Contracts\RateLimitStore;
 use Saloon\RateLimitPlugin\Stores\LaravelCacheStore;
 

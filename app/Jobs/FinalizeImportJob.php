@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Models\Import;
+use App\Models\ImportMeta\Import;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;

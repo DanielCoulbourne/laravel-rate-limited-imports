@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ApiItem;
+use App\Models\SourceApi\ApiItem;
 use Illuminate\Http\Request;
 
 class ItemController extends Controller

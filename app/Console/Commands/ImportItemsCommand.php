@@ -6,9 +6,9 @@ use App\Contracts\ImportSource;
 use App\ImportSources\ItemImportSource;
 use App\Jobs\FinalizeImportJob;
 use App\Jobs\ImportItemDetailsJob;
-use App\Models\Import;
-use App\Models\ImportedItem;
-use App\Models\ImportItemStatus;
+use App\Models\ImportMeta\Import;
+use App\Models\ImportMeta\ImportedItem;
+use App\Models\ImportMeta\ImportedItemStatus;
 use Illuminate\Console\Command;
 
 /**
@@ -41,7 +41,7 @@ class ImportItemsCommand extends Command
 
             // Clear imported items (separate table from api_items)
             ImportedItem::truncate();
-            ImportItemStatus::truncate();
+            ImportedItemStatus::truncate();
             Import::truncate();
             \Illuminate\Support\Facades\Cache::flush();
 
@@ -103,7 +103,7 @@ class ImportItemsCommand extends Command
                 $model = $source->createModelFromListItem($item);
 
                 // Create import status tracking (polymorphic)
-                $status = ImportItemStatus::create([
+                $status = ImportedItemStatus::create([
                     'import_id' => $import->id,
                     'importable_type' => get_class($model),
                     'importable_id' => $model->id,

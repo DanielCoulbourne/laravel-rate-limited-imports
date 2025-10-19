@@ -3,7 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\ImportResource\Pages;
-use App\Models\Import;
+use App\Models\ImportMeta\Import;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;

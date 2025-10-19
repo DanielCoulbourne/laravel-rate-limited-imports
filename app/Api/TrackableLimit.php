@@ -2,7 +2,7 @@
 
 namespace App\Api;
 
-use App\Models\Import;
+use App\Models\ImportMeta\Import;
 use Saloon\RateLimitPlugin\Limit;
 
 class TrackableLimit extends Limit
