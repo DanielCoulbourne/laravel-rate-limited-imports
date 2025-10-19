@@ -67,14 +67,49 @@ class ImportResource extends Resource
                         return $formatTime($sleepSeconds) . ' / ' . $formatTime($activeSeconds);
                     }),
 
-                Tables\Columns\IconColumn::make('status')
+                Tables\Columns\TextColumn::make('status')
                     ->label('Status')
-                    ->getStateUsing(fn (Import $record) => $record->isComplete())
-                    ->boolean()
-                    ->trueIcon('heroicon-o-check-circle')
-                    ->falseIcon('heroicon-o-clock')
-                    ->trueColor('success')
-                    ->falseColor('warning'),
+                    ->badge()
+                    ->formatStateUsing(function (Import $record) {
+                        if ($record->isCancelled()) {
+                            return 'Cancelled';
+                        }
+                        if ($record->isComplete()) {
+                            return 'Completed';
+                        }
+                        if ($record->isRunning()) {
+                            return 'Running';
+                        }
+                        if ($record->isOverdue()) {
+                            return 'Overdue';
+                        }
+                        if ($record->isScheduled()) {
+                            return 'Scheduled';
+                        }
+                        return 'Unknown';
+                    })
+                    ->color(fn (Import $record) => match(true) {
+                        $record->isCancelled() => 'gray',
+                        $record->isComplete() => 'success',
+                        $record->isRunning() => 'warning',
+                        $record->isOverdue() => 'danger',
+                        $record->isScheduled() => 'info',
+                        default => 'gray',
+                    })
+                    ->icon(fn (Import $record) => match(true) {
+                        $record->isCancelled() => 'heroicon-o-x-circle',
+                        $record->isComplete() => 'heroicon-o-check-circle',
+                        $record->isRunning() => 'heroicon-o-clock',
+                        $record->isOverdue() => 'heroicon-o-exclamation-triangle',
+                        $record->isScheduled() => 'heroicon-o-calendar',
+                        default => 'heroicon-o-question-mark-circle',
+                    }),
+                Tables\Columns\TextColumn::make('scheduled_at')
+                    ->label('Scheduled For')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable()
+                    ->default('—'),
             ])
             ->defaultSort('id', 'desc')
             ->filters([

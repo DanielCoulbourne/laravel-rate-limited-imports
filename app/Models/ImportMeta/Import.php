@@ -10,8 +10,11 @@ class Import extends Model
 {
     protected $fillable = [
         'importable_type',
+        'status',
+        'scheduled_at',
         'started_at',
         'ended_at',
+        'cancelled_at',
         'items_count',
         'items_imported_count',
         'rate_limit_hits_count',
@@ -23,8 +26,10 @@ class Import extends Model
     ];
 
     protected $casts = [
+        'scheduled_at' => 'datetime',
         'started_at' => 'datetime',
         'ended_at' => 'datetime',
+        'cancelled_at' => 'datetime',
         'last_finalize_attempt_at' => 'datetime',
         'metadata' => 'array',
     ];
@@ -187,5 +192,118 @@ class Import extends Model
     public function getMetadata(string $key, mixed $default = null): mixed
     {
         return $this->metadata[$key] ?? $default;
+    }
+
+    /**
+     * Check if import is scheduled for the future
+     */
+    public function isScheduled(): bool
+    {
+        return $this->status === 'scheduled' && $this->scheduled_at && $this->scheduled_at->isFuture();
+    }
+
+    /**
+     * Check if import is overdue (scheduled in the past but not started)
+     */
+    public function isOverdue(): bool
+    {
+        return $this->status === 'scheduled'
+            && $this->scheduled_at
+            && $this->scheduled_at->isPast()
+            && !$this->started_at;
+    }
+
+    /**
+     * Check if import is running
+     */
+    public function isRunning(): bool
+    {
+        return $this->status === 'running' && $this->started_at && !$this->ended_at;
+    }
+
+    /**
+     * Check if import is cancelled
+     */
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled' && $this->cancelled_at !== null;
+    }
+
+    /**
+     * Mark import as cancelled
+     */
+    public function markAsCancelled(): void
+    {
+        $this->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+        ]);
+    }
+
+    /**
+     * Mark import as started
+     */
+    public function markAsStarted(): void
+    {
+        $this->update([
+            'status' => 'running',
+            'started_at' => now(),
+        ]);
+    }
+
+    /**
+     * Get the next scheduled import time based on configured schedule
+     * Schedule: 0, 3, 6, 9, 12, 15, 18, 21 o'clock
+     */
+    public static function getNextScheduledTime(): \Carbon\Carbon
+    {
+        $schedule = [0, 3, 6, 9, 12, 15, 18, 21];
+        $now = now();
+        $currentHour = $now->hour;
+
+        // Find the next scheduled hour
+        foreach ($schedule as $hour) {
+            if ($hour > $currentHour) {
+                return $now->copy()->setHour($hour)->setMinute(0)->setSecond(0);
+            }
+        }
+
+        // If no hour found today, schedule for first slot tomorrow
+        return $now->copy()->addDay()->setHour($schedule[0])->setMinute(0)->setSecond(0);
+    }
+
+    /**
+     * Get the latest scheduled import
+     */
+    public static function getLatestScheduled(): ?self
+    {
+        return static::where('status', 'scheduled')
+            ->whereNotNull('scheduled_at')
+            ->orderBy('scheduled_at', 'desc')
+            ->first();
+    }
+
+    /**
+     * Get all overdue imports
+     */
+    public static function getOverdueImports()
+    {
+        return static::where('status', 'scheduled')
+            ->whereNotNull('scheduled_at')
+            ->where('scheduled_at', '<=', now())
+            ->whereNull('started_at')
+            ->orderBy('scheduled_at', 'desc')
+            ->get();
+    }
+
+    /**
+     * Check if there's a future scheduled import
+     */
+    public static function hasFutureScheduledImport(): bool
+    {
+        return static::where('status', 'scheduled')
+            ->whereNotNull('scheduled_at')
+            ->where('scheduled_at', '>', now())
+            ->exists();
     }
 }

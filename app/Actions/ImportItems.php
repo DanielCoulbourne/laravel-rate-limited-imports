@@ -18,7 +18,24 @@ class ImportItems
     public string $commandSignature = 'import:items {--fresh : Delete all existing imports and items before starting}';
     public string $commandDescription = 'Import items from API using the packageable import system';
 
-    public function handle(bool $fresh = false): int
+    /**
+     * Get the unique ID for the job.
+     * This ensures only one import can run at a time.
+     */
+    public function uniqueId(): string
+    {
+        return 'import-items';
+    }
+
+    /**
+     * Configure job properties
+     */
+    public function configureJob($job): void
+    {
+        $job->onQueue('imports');
+    }
+
+    public function handle(bool $fresh = false, ?int $importId = null): int
     {
         $source = new ItemImportSource();
 
@@ -29,10 +46,17 @@ class ImportItems
             Cache::flush();
         }
 
-        $import = Import::create([
-            'importable_type' => $source->getModelClass(),
-            'started_at' => now(),
-        ]);
+        // Use provided import or create new one
+        if ($importId) {
+            $import = Import::findOrFail($importId);
+            $import->markAsStarted();
+        } else {
+            $import = Import::create([
+                'importable_type' => $source->getModelClass(),
+                'status' => 'running',
+                'started_at' => now(),
+            ]);
+        }
 
         $import->setMetadata('connector_class', get_class($source->getConnector($import->id)));
 
@@ -88,6 +112,11 @@ class ImportItems
         }
 
         FinalizeImport::dispatch($import->id)->delay(now()->addSeconds(30));
+
+        // Schedule next import if there isn't one already
+        if (!Import::hasFutureScheduledImport()) {
+            ScheduleImport::dispatch();
+        }
 
         return Command::SUCCESS;
     }
