@@ -37,12 +37,17 @@ class ImportItemsCommand extends Command
 
         // Handle --fresh flag
         if ($this->option('fresh')) {
-            $this->warn('Clearing all existing data...');
-            Item::truncate();
+            $this->warn('Clearing import tracking data...');
+
+            // Only clear the IMPORTED items (those with external_id)
+            // Keep the original seeded items that the API serves
+            Item::whereNotNull('external_id')->delete();
             ImportItemStatus::truncate();
             Import::truncate();
             \Illuminate\Support\Facades\Cache::flush();
-            $this->info('✓ Cleared all imports, import statuses, items, and cache');
+
+            $this->info('✓ Cleared all imports, import statuses, imported items, and cache');
+            $this->info('✓ Kept original seeded items for API to serve');
             $this->newLine();
         }
 
