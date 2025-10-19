@@ -109,7 +109,7 @@ class ImportResource extends Resource
                     ->dateTime()
                     ->sortable()
                     ->toggleable()
-                    ->default('—'),
+                    ->placeholder('N/A'),
             ])
             ->defaultSort('id', 'desc')
             ->filters([
