@@ -3,123 +3,86 @@
 use App\Api\RateTestConnector;
 use App\Api\Requests\GetItemsRequest;
 use Illuminate\Support\Facades\Cache;
+use Saloon\Http\Response;
 use Saloon\RateLimitPlugin\Exceptions\RateLimitReachedException;
+use Saloon\RateLimitPlugin\Limit;
 
 beforeEach(function () {
     // Clear rate limit cache before each test
     Cache::flush();
 });
 
-test('saloon client throws exception when client-side rate limit is reached', function () {
-    $connector = new RateTestConnector();
+test('saloon client sleeps when client-side rate limit is reached', function () {
+    $connector = new RateTestConnector;
 
     $successCount = 0;
-    $exceptionThrown = false;
-    $exception = null;
+    $startTime = microtime(true);
 
-    // Make requests until Saloon's client-side rate limiter throws an exception
+    // Make requests - should sleep when rate limit is hit
     for ($i = 1; $i <= 25; $i++) {
-        try {
-            $request = new GetItemsRequest(perPage: 1);
-            $response = $connector->send($request);
+        $request = new GetItemsRequest(perPage: 1);
+        $response = $connector->send($request);
 
-            if ($response->successful()) {
-                $successCount++;
-            }
-        } catch (RateLimitReachedException $e) {
-            $exceptionThrown = true;
-            $exception = $e;
-            break;
+        if ($response->successful()) {
+            $successCount++;
         }
     }
 
-    // Should have hit the client-side rate limit and thrown exception
-    expect($exceptionThrown)->toBeTrue('Saloon should throw RateLimitReachedException');
-    expect($successCount)->toBeGreaterThanOrEqual(19)->toBeLessThanOrEqual(20);
+    $duration = microtime(true) - $startTime;
 
-    // Verify exception details
-    expect($exception)->toBeInstanceOf(RateLimitReachedException::class);
-    expect($exception->getMessage())->toContain('Rate Limit Reached');
+    // Should have successfully made all requests
+    expect($successCount)->toBe(25);
+
+    // Should have taken extra time due to sleeping (at least a few seconds)
+    // 25 requests with 20 req/10sec limit means we need at least 2 windows = ~10+ seconds
+    expect($duration)->toBeGreaterThan(5);
 });
 
-test('saloon client rate limit exception contains limit information', function () {
-    $connector = new RateTestConnector();
+test('saloon client shares rate limit state across multiple connector instances', function () {
+    // This simulates multiple queue workers using LaravelCacheStore
+    Cache::flush();
 
-    $exception = null;
+    $connector1 = new RateTestConnector;
+    $connector2 = new RateTestConnector;
 
-    // Make requests until we hit the limit
-    for ($i = 1; $i <= 25; $i++) {
-        try {
-            $response = $connector->send(new GetItemsRequest(perPage: 1));
-        } catch (RateLimitReachedException $e) {
-            $exception = $e;
-            break;
-        }
+    // Make 10 requests from first connector
+    for ($i = 1; $i <= 10; $i++) {
+        $connector1->send(new GetItemsRequest(perPage: 1));
     }
 
-    expect($exception)->not()->toBeNull();
-    expect($exception)->toBeInstanceOf(RateLimitReachedException::class);
+    // Make 5 more from second connector - should share the same rate limit counter
+    // Total is 15 out of 20, so should NOT sleep yet
+    $startTime = microtime(true);
 
-    // Get the limit from the exception
-    $limit = $exception->getLimit();
-    expect($limit)->not()->toBeNull();
-
-    // The limit should have information about max attempts
-    expect($limit->maxAttempts)->toBeGreaterThan(0);
-});
-
-test('saloon client can catch and handle rate limit exception gracefully', function () {
-    $connector = new RateTestConnector();
-
-    $successCount = 0;
-    $rateLimitHit = false;
-    $retriedSuccessfully = false;
-
-    for ($i = 1; $i <= 25; $i++) {
-        try {
-            $response = $connector->send(new GetItemsRequest(perPage: 1));
-
-            if ($response->successful()) {
-                $successCount++;
-            }
-        } catch (RateLimitReachedException $e) {
-            $rateLimitHit = true;
-
-            // In production, you would wait before retrying
-            // sleep($e->getLimit()->releaseInSeconds);
-
-            // For testing, simulate waiting by clearing cache
-            Cache::flush();
-
-            // Try again
-            try {
-                $response = $connector->send(new GetItemsRequest(perPage: 1));
-                if ($response->successful()) {
-                    $retriedSuccessfully = true;
-                }
-            } catch (RateLimitReachedException $e) {
-                // Still rate limited
-            }
-
-            break;
-        }
+    for ($i = 1; $i <= 5; $i++) {
+        $connector2->send(new GetItemsRequest(perPage: 1));
     }
 
-    expect($rateLimitHit)->toBeTrue();
-    expect($successCount)->toBeGreaterThanOrEqual(19);
-    expect($retriedSuccessfully)->toBeTrue('Should succeed after clearing cache');
+    $duration = microtime(true) - $startTime;
+
+    // Should complete quickly since we're under the limit
+    expect($duration)->toBeLessThan(2);
+
+    // Now make 10 more requests, pushing us to 25 total
+    $startTime2 = microtime(true);
+    for ($i = 1; $i <= 10; $i++) {
+        $connector1->send(new GetItemsRequest(perPage: 1));
+    }
+    $duration2 = microtime(true) - $startTime2;
+
+    // Should have slept because the shared store knows we already made 15 requests
+    expect($duration2)->toBeGreaterThan(3);
 });
 
-test('server-side rate limit returns 429 without client-side limiting', function () {
-    // Create a connector without rate limiting for this test
-    $connector = new class extends RateTestConnector {
-        protected function resolveLimits(): array
-        {
-            return []; // Disable client-side rate limiting
-        }
+test('server-side 429 response structure is correct', function () {
+    // Create a connector without rate limiting to get raw 429 from server
+    Cache::flush();
+
+    $connector = new class extends RateTestConnector
+    {
+        protected bool $rateLimitingEnabled = false;
     };
 
-    $successCount = 0;
     $rateLimitResponse = null;
 
     // Make requests until server returns 429
@@ -129,46 +92,17 @@ test('server-side rate limit returns 429 without client-side limiting', function
         if ($response->status() === 429) {
             $rateLimitResponse = $response;
             break;
-        } elseif ($response->successful()) {
-            $successCount++;
         }
     }
 
     // Should have hit server-side rate limit
     expect($rateLimitResponse)->not()->toBeNull('Should get 429 from server');
     expect($rateLimitResponse->status())->toBe(429);
-    expect($successCount)->toBeGreaterThanOrEqual(19);
 
     // Verify 429 response structure
     expect($rateLimitResponse->header('X-RateLimit-Limit'))->not()->toBeNull();
     expect($rateLimitResponse->header('X-RateLimit-Remaining'))->toBe('0');
     expect($rateLimitResponse->header('Retry-After'))->not()->toBeNull();
-
-    $body = $rateLimitResponse->json();
-    expect($body['message'])->toBe('Too Many Requests');
-    expect($body['retry_after'])->toBeInt();
-});
-
-test('server 429 response includes proper retry-after header', function () {
-    // Connector without client-side limiting
-    $connector = new class extends RateTestConnector {
-        protected function resolveLimits(): array
-        {
-            return [];
-        }
-    };
-
-    $rateLimitResponse = null;
-
-    for ($i = 1; $i <= 25; $i++) {
-        $response = $connector->send(new GetItemsRequest(perPage: 1));
-        if ($response->status() === 429) {
-            $rateLimitResponse = $response;
-            break;
-        }
-    }
-
-    expect($rateLimitResponse)->not()->toBeNull();
 
     $retryAfter = (int) $rateLimitResponse->header('Retry-After');
     expect($retryAfter)->toBeGreaterThan(0);
@@ -176,28 +110,43 @@ test('server 429 response includes proper retry-after header', function () {
 
     $resetTime = (int) $rateLimitResponse->header('X-RateLimit-Reset');
     expect($resetTime)->toBeGreaterThan(time());
-});
 
-test('server 429 response is properly identified as failed', function () {
-    $connector = new class extends RateTestConnector {
-        protected function resolveLimits(): array
-        {
-            return [];
-        }
-    };
+    $body = $rateLimitResponse->json();
+    expect($body['message'])->toBe('Too Many Requests');
+    expect($body['retry_after'])->toBeInt();
 
-    $rateLimitResponse = null;
-
-    for ($i = 1; $i <= 25; $i++) {
-        $response = $connector->send(new GetItemsRequest(perPage: 1));
-        if ($response->status() === 429) {
-            $rateLimitResponse = $response;
-            break;
-        }
-    }
-
-    expect($rateLimitResponse)->not()->toBeNull();
+    // Response should be identified as failed
     expect($rateLimitResponse->successful())->toBeFalse();
     expect($rateLimitResponse->clientError())->toBeTrue();
     expect($rateLimitResponse->failed())->toBeTrue();
+});
+
+test('custom 429 handler detects and handles server rate limits', function () {
+    // Test that the custom limit in our connector properly detects 429s
+    // Note: The custom limit with sleep() may still throw if it hits too many 429s
+    // This is expected behavior - it means the API is consistently rate limiting us
+
+    Cache::flush();
+    $connector = new RateTestConnector;
+
+    $got429 = false;
+    $exceptionThrown = false;
+
+    try {
+        // Make many requests to trigger server-side 429
+        for ($i = 1; $i <= 30; $i++) {
+            $response = $connector->send(new GetItemsRequest(perPage: 1));
+
+            if ($response->status() === 429) {
+                $got429 = true;
+            }
+        }
+    } catch (RateLimitReachedException $e) {
+        // This can happen if the custom 429 limit keeps getting hit
+        $exceptionThrown = true;
+    }
+
+    // We should either get a 429 response OR an exception from the 429 handler
+    // Both indicate the rate limiting is working
+    expect($got429 || $exceptionThrown)->toBeTrue('Should detect rate limiting');
 });

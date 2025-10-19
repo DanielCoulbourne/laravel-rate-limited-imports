@@ -36,7 +36,7 @@ class ItemSeeder extends Seeder
 
         $items = [];
 
-        for ($i = 1; $i <= 2000; $i++) {
+        for ($i = 1; $i <= 20000; $i++) {
             $category = $categories[array_rand($categories)];
             $type = $productTypes[array_rand($productTypes)];
             $adjective = $adjectives[array_rand($adjectives)];
