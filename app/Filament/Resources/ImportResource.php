@@ -125,6 +125,14 @@ class ImportResource extends Resource
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
+                Tables\Actions\Action::make('cancel')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('Cancel Import')
+                    ->modalDescription('Are you sure you want to cancel this import? This action cannot be undone.')
+                    ->action(fn (Import $record) => $record->markAsCancelled())
+                    ->visible(fn (Import $record) => $record->isScheduled() || $record->isOverdue()),
             ])
             ->bulkActions([])
             ->poll('1s');

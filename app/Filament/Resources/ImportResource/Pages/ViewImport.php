@@ -25,7 +25,17 @@ class ViewImport extends ViewRecord
 
     protected function getHeaderActions(): array
     {
-        return [];
+        return [
+            \Filament\Actions\Action::make('cancel')
+                ->label('Cancel Import')
+                ->icon('heroicon-o-x-circle')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading('Cancel Import')
+                ->modalDescription('Are you sure you want to cancel this import? This action cannot be undone.')
+                ->action(fn () => $this->record->markAsCancelled())
+                ->visible(fn () => $this->record->isScheduled() || $this->record->isOverdue()),
+        ];
     }
 
     public function infolist(Infolist $infolist): Infolist
