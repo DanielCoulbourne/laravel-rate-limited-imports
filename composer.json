@@ -11,6 +11,7 @@
         "laravel/framework": "^12.0",
         "laravel/horizon": "^5.36",
         "laravel/tinker": "^2.10.1",
+        "lorisleiva/laravel-actions": "^2.9",
         "ryangjchandler/filament-progress-column": "^1.0",
         "saloonphp/rate-limit-plugin": "^2.1",
         "saloonphp/saloon": "^3.14"

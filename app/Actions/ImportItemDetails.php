@@ -1,83 +1,63 @@
 <?php
 
-namespace App\Jobs;
+namespace App\Actions;
 
 use App\Contracts\Importable;
 use App\Models\ImportMeta\Import;
 use App\Models\ImportMeta\ImportedItemStatus;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
+use Lorisleiva\Actions\Concerns\AsAction;
 
 /**
- * Generic job for importing item details
+ * Import Item Details Action
  *
- * This job is completely generic and works with any model that implements
+ * This action is completely generic and works with any model that implements
  * the Importable interface. It fetches details from the API and delegates
  * the population logic to the model itself.
  *
- * All import tracking happens via the ImportItemStatus model, so the
- * actual model's table doesn't need any special columns.
+ * Can be used as:
+ * - Queued job: ImportItemDetails::dispatch($statusId, $importId)
+ * - Direct call: ImportItemDetails::run($statusId, $importId)
+ * - Command: php artisan import:item-details {statusId} {importId}
  */
-class ImportItemDetailsJob implements ShouldQueue
+class ImportItemDetails
 {
-    use Queueable;
+    use AsAction;
 
     /**
      * The number of times the job may be attempted.
-     *
-     * Allow up to 5 attempts to handle transient failures like network issues,
-     * temporary API errors, etc. With exponential backoff, this gives plenty
-     * of opportunity for temporary issues to resolve.
      */
-    public $tries = 5;
+    public int $tries = 5;
 
     /**
      * The number of seconds to wait before retrying the job.
-     *
      * Uses exponential backoff: 30s, 60s, 120s, 240s
      */
-    public $backoff = [30, 60, 120, 240];
+    public array $backoff = [30, 60, 120, 240];
 
     /**
-     * Create a new job instance.
+     * Command signature for CLI usage
      */
-    public function __construct(
-        public int $importItemStatusId,
-        public int $importId
-    ) {
-    }
+    public string $commandSignature = 'import:item-details {importItemStatusId} {importId}';
 
     /**
-     * Handle a job failure.
-     *
-     * This is called when the job has exhausted all retry attempts.
-     * We mark the item status as failed so the finalize job knows to skip it.
+     * Command description
      */
-    public function failed(\Throwable $exception): void
+    public string $commandDescription = 'Import details for a specific item';
+
+    /**
+     * Handle the action
+     */
+    public function handle(int $importItemStatusId, int $importId): void
     {
-        $status = ImportedItemStatus::find($this->importItemStatusId);
-        if ($status) {
-            $status->markAsFailed($exception->getMessage());
-        }
-    }
-
-    /**
-     * Execute the job.
-     *
-     * Fetches the full details for an item from the API and updates
-     * the model using its own populateFromApiResponse method.
-     */
-    public function handle(): void
-    {
-        $status = ImportedItemStatus::find($this->importItemStatusId);
+        $status = ImportedItemStatus::find($importItemStatusId);
         if (!$status) {
             return;
         }
 
         $model = $status->importable;
         if (!$model) {
-            throw new \Exception("Importable model not found for status {$this->importItemStatusId}");
+            throw new \Exception("Importable model not found for status {$importItemStatusId}");
         }
 
         // Verify model implements Importable
@@ -85,9 +65,9 @@ class ImportItemDetailsJob implements ShouldQueue
             throw new \Exception("Model must implement Importable interface");
         }
 
-        $import = Import::find($this->importId);
+        $import = Import::find($importId);
         if (!$import) {
-            throw new \Exception("Import not found: {$this->importId}");
+            throw new \Exception("Import not found: {$importId}");
         }
 
         // Mark as processing
@@ -96,15 +76,13 @@ class ImportItemDetailsJob implements ShouldQueue
         // Get the API request from the model
         $request = $model->getApiDetailRequest();
 
-        // Get connector from import source (stored in metadata for now)
-        // In a real package, this would be resolved via a registry or config
+        // Get connector from import source (stored in metadata)
         $connectorClass = $import->getMetadata('connector_class');
-        $connector = new $connectorClass($this->importId);
+        $connector = new $connectorClass($importId);
 
         $response = $connector->send($request);
 
         // Handle unexpected 429 responses with global sleep coordination
-        // This should rarely happen since our rate limiter sleeps proactively
         while ($response->status() === 429) {
             // Track that we hit a rate limit
             $import->incrementRateLimitHits();
@@ -112,7 +90,6 @@ class ImportItemDetailsJob implements ShouldQueue
             $retryAfter = (int) ($response->header('Retry-After') ?? 60);
 
             // Atomically try to set global sleep lock
-            // Only ONE worker will successfully set it
             $now = time();
             $sleepUntil = $now + $retryAfter;
             $lockKey = 'rate_limit:sleep_until';
@@ -151,5 +128,41 @@ class ImportItemDetailsJob implements ShouldQueue
 
         // Increment the import's items_imported_count
         $import->incrementItemsImportedCount();
+    }
+
+    /**
+     * Handle a job failure.
+     */
+    public function failed(int $importItemStatusId, int $importId, \Throwable $exception): void
+    {
+        $status = ImportedItemStatus::find($importItemStatusId);
+        if ($status) {
+            $status->markAsFailed($exception->getMessage());
+        }
+    }
+
+    /**
+     * Configure as a queueable job
+     */
+    public function asJob(int $importItemStatusId, int $importId): void
+    {
+        $this->handle($importItemStatusId, $importId);
+    }
+
+    /**
+     * Get job middleware
+     */
+    public function getJobMiddleware(): array
+    {
+        return [];
+    }
+
+    /**
+     * Configure job properties
+     */
+    public function configureJob($job): void
+    {
+        $job->tries = $this->tries;
+        $job->backoff = $this->backoff;
     }
 }

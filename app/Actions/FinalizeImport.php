@@ -1,43 +1,49 @@
 <?php
 
-namespace App\Jobs;
+namespace App\Actions;
 
 use App\Models\ImportMeta\Import;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
+use Lorisleiva\Actions\Concerns\AsAction;
 
-class FinalizeImportJob implements ShouldQueue
+/**
+ * Finalize Import Action
+ *
+ * This action runs after all ImportItemDetails jobs should be complete.
+ * It checks if the import is actually complete, and if not, re-queues itself
+ * to check again later.
+ *
+ * COMPLETION LOGIC:
+ * 1. Check if 100% complete (all items imported successfully)
+ * 2. Check if complete including failed items (items that failed > 5 minutes ago
+ *    are considered permanently failed and won't retry)
+ * 3. If neither, re-queue to check again in 10 seconds
+ *
+ * Can be used as:
+ * - Queued job: FinalizeImport::dispatch($importId)->delay(now()->addSeconds(30))
+ * - Direct call: FinalizeImport::run($importId)
+ * - Command: php artisan import:finalize {importId}
+ */
+class FinalizeImport
 {
-    use Queueable;
+    use AsAction;
 
     /**
-     * Create a new job instance.
+     * Command signature for CLI usage
      */
-    public function __construct(
-        public int $importId
-    ) {
-    }
+    public string $commandSignature = 'import:finalize {importId}';
 
     /**
-     * Execute the job.
-     *
-     * This job runs after all ImportItemDetailsJob jobs should be complete.
-     * It checks if the import is actually complete, and if not, re-queues itself
-     * to check again later.
-     *
-     * COMPLETION LOGIC:
-     * 1. Check if 100% complete (all items imported successfully)
-     * 2. Check if complete including failed items (items that failed > 5 minutes ago
-     *    are considered permanently failed and won't retry)
-     * 3. If neither, re-queue to check again in 10 seconds
-     *
-     * This approach is much more accurate than hard-coded attempt limits because
-     * it tracks actual failure state at the item level.
+     * Command description
      */
-    public function handle(): void
+    public string $commandDescription = 'Finalize an import and mark it as complete';
+
+    /**
+     * Handle the action
+     */
+    public function handle(int $importId): void
     {
-        $import = Import::find($this->importId);
+        $import = Import::find($importId);
         if (!$import) {
             return;
         }
@@ -78,6 +84,14 @@ class FinalizeImportJob implements ShouldQueue
         }
 
         // Not complete yet, check again in 10 seconds
-        static::dispatch($this->importId)->delay(now()->addSeconds(10));
+        static::dispatch($importId)->delay(now()->addSeconds(10));
+    }
+
+    /**
+     * Configure as a queueable job
+     */
+    public function asJob(int $importId): void
+    {
+        $this->handle($importId);
     }
 }
